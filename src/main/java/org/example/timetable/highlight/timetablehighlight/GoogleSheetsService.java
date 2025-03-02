@@ -1,4 +1,4 @@
-package com.example.webtablecollect.service;
+package org.example.timetable.highlight.timetablehighlight;
 
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
@@ -32,14 +32,12 @@ public class GoogleSheetsService {
 
     private final Sheets sheetsService;
     private final Drive driveService;
-    private final TableParserService tableParserService;
     private String spreadsheetId;
 
-    public GoogleSheetsService(TableParserService tableParserService) throws GeneralSecurityException, IOException {
+    public GoogleSheetsService() throws GeneralSecurityException, IOException {
         this.sheetsService = getSheetsService();
         this.driveService = getDriveService();
         spreadsheetId = null;
-        this.tableParserService = tableParserService;
     }
 
     public String sweepOld(Integer days) {
@@ -177,262 +175,6 @@ public class GoogleSheetsService {
                 .execute();
     }
 
-    public String fillData() {
-        StringBuilder logWhatIsBad;
-        if (this.spreadsheetId == null) {
-            return "Спочатку перейдіть <a href=\"/a/cs\">за посиланням /a/cs</a>," +
-                    "потім у новоствореній гуглотаблиці заповніть список студентів та перелік id з qbit," +
-                    "і лише потім повторно перейдіть за поточним посиланням.";
-        } else {
-            logWhatIsBad = new StringBuilder();
-
-            Map<Integer, String> qBitIds = null;
-            try {
-                qBitIds = getQBitIds();
-            } catch (IOException ex) {
-                return ex.getMessage();
-            }
-            List<String> studNamesFromSSheet = null;
-            try {
-                studNamesFromSSheet = getStudNamesFromSSheet();
-            } catch (IOException ex) {
-                return ex.getMessage();
-            }
-            for (Map.Entry<Integer, String> entry : qBitIds.entrySet()) {
-                try {
-                    String fillRes = fillColumn(entry.getKey(), entry.getValue(), studNamesFromSSheet);
-                    if (!("OK".equals(fillRes))) {
-                        logWhatIsBad.append("<h1>Column ")
-                                .append((char) ('A' + entry.getKey()))
-                                .append(", id = ")
-                                .append(entry.getValue())
-                                .append("</h1>\n<br>\n")
-                                .append(fillRes);
-                    }
-                } catch (IOException e) {
-                    logWhatIsBad.append("<h1>Column ")
-                            .append((char) ('A' + entry.getKey()))
-                            .append(" &mdash; completely failed</h1>\n<br>\n");
-                    fillColumnWithErrorMessage(entry);
-                }
-            }
-        }
-        if (logWhatIsBad.isEmpty())
-            return "Done.";
-        else
-            return logWhatIsBad.toString();
-    }
-
-    private void fillColumnWithErrorMessage(Map.Entry<Integer, String> entry) {
-        System.out.println("Non-implemented-yet method fillColumnWithErrorMessage was called, entry: " + entry.getKey() + " -> " + entry.getValue());
-    }
-
-    private List<String> getStudNamesFromSSheet() throws IOException {
-        List<String> res = new ArrayList<>();
-        String range = "Аркуш1!A2:A999";
-        ValueRange response = sheetsService.spreadsheets().values()
-                .get(spreadsheetId, range)
-                .execute();
-        List<List<Object>> values = response.getValues();
-        if (values == null || values.isEmpty()) {
-            throw new IOException("Failed getting studNames, values = " + values);
-        }
-        for (List<Object> row : values) {
-            if (row.size() == 1) {
-                res.add(row.get(0).toString());
-            }
-            else res.add("");
-        }
-        while (!res.isEmpty() && (res.getLast() == null || res.getLast().isEmpty() || res.getLast().isBlank())) {
-            res.removeLast();
-        }
-        if(res.isEmpty()) {
-            throw new IOException("Схоже, що Ви не вказали повні імена студентів у стовпчику A");
-        }
-        res.addFirst("placeHolder");
-        return res;
-    }
-
-    private Map<Integer, String> getQBitIds() throws IOException {
-        Map<Integer, String> res = new HashMap<>();
-        String range = "Аркуш1!C1:BZ1";
-        ValueRange response = sheetsService.spreadsheets().values()
-                    .get(spreadsheetId, range)
-                    .execute();
-        List<List<Object>> values = response.getValues();
-        if (values == null || values.isEmpty()) {
-            throw new IOException("Failed getting qBit ids, values = " + values);
-        }
-        for (List<Object> row : values) {
-            for (int i = 0; i < row.size(); i++) {
-                String qBitId = row.get(i).toString();
-                if (qBitId.matches("\\d+")) {
-                    res.put(i+2, row.get(i).toString());
-                }
-            }
-        }
-        if(res.isEmpty()) {
-            throw new IOException("Схоже, що Ви не вказали перелік ids з qBit у рядку 1");
-        }
-        return res;
-    }
-
-    private String fillColumn(int column, String qBitId, List<String> studNamesFromSSheet) throws IOException {
-        StringBuilder logWhatIsBad = new StringBuilder();
-        Map<String, Double> nameToScore = tableParserService.fetchResultsAsMap(qBitId);
-        Set<String> notCopiedNames = nameToScore.keySet();
-        NavigableMap<Integer, Double> changes = new TreeMap<>();
-        NavigableSet<Integer> rowsNotFound = new TreeSet<>();
-        List<Double> oldMarks = new ArrayList<>();
-        oldMarks.add(0, Double.NaN);
-        oldMarks.add(1, Double.NaN);
-
-        char columnLetter = (char)('A' + column); // Fails for ranges righter than Z column, but it fails for many other reasons too, so in current version it looks satisfactory
-        String range = "Аркуш1!" + columnLetter + "1:" + columnLetter + Math.min(999, studNamesFromSSheet.size());
-        ValueRange response = sheetsService.spreadsheets().values()
-                .get(spreadsheetId, range)
-                .execute();
-        List<List<Object>> values = response.getValues();
-        if (values == null || values.isEmpty()) {
-            throw new IOException("Failed getting old marks, values = " + values);
-        }
-        for (int i=2; i<studNamesFromSSheet.size(); i++) { // intentionally skip 0 and 1
-            if (i >= values.size())
-                oldMarks.add(i, 0.0);
-            else if (values.get(i).size() == 1) {
-                try {
-                    oldMarks.add(i, Double.parseDouble(values.get(i).get(0).toString().replace(",", ".")));
-                } catch (NumberFormatException ex) {
-                    oldMarks.add(i, 0.0);
-                }
-            } else
-                oldMarks.add(i, 0.0);
-        }
-
-        for (int i = 2; i < studNamesFromSSheet.size(); i++) {
-            String currStudName = studNamesFromSSheet.get(i);
-            if (!currStudName.isEmpty()) { // assuming lists MAY contain empty cells (between groups, fired students, etc)
-                if (nameToScore.containsKey(currStudName)) {
-                    double newScore = nameToScore.get(currStudName);
-                    double oldScore = oldMarks.get(i);
-                    if(Math.abs(oldScore - newScore) >= 1e-3) {
-                        changes.put(i, newScore);
-                    }
-                    notCopiedNames.remove(currStudName);
-                } else {
-                    logWhatIsBad.append("\n<br>\n" + currStudName + " at row " + (i+1) + " wasn't found in qBit list");
-                    rowsNotFound.add(i);
-                }
-            }
-        }
-
-        if(!notCopiedNames.isEmpty())
-            logWhatIsBad.append("\n<br>\nTotally ")
-                    .append(notCopiedNames.size())
-                    .append(" names from qBit list weren't found in sheet's studNames: ")
-                    .append(Arrays.deepToString(notCopiedNames.toArray()));
-
-        if(changes.isEmpty() && rowsNotFound.isEmpty()) {
-            logWhatIsBad.append("\n<br>\nNo changes found.");
-        }
-        else {
-            try {
-                updateChangedCellsInColumns(spreadsheetId, column, changes, rowsNotFound, logWhatIsBad.toString());
-            } catch (IOException e) {
-                logWhatIsBad.append("\n<br>\nValues weren't actually updated.\n<br>\nException: " + e.getMessage() + "\n<br>\n");
-            }
-        }
-        if(logWhatIsBad.isEmpty())
-            return "OK";
-        else
-            return logWhatIsBad.toString();
-    }
-
-    private void updateChangedCellsInColumns(String spreadsheetId,
-                                             int column,
-                                             NavigableMap<Integer, Double> changes,
-                                             NavigableSet<Integer> rowsNotFound,
-                                             String logMessage) throws IOException
-    {
-        char columnLetter = (char)('A' + column); // Fails for ranges righter than Z column, but it fails for many other reasons too, so in current version it looks satisfactory
-        List<ValueRange> ranges = new ArrayList<>();
-        if (!(changes.isEmpty())) {
-            Integer i = changes.firstKey();
-            while (i != null) {
-                Integer j = i + 1;
-                while (changes.containsKey(j)) j++;
-                j--;
-                NavigableMap<Integer, Double> sm = changes.subMap(i, true, j, true);
-                List<List<Object>> currSegmValues = new ArrayList<>();
-                for (NavigableMap.Entry<Integer, Double> entry : sm.entrySet()) {
-                    currSegmValues.add(List.of(entry.getValue()));
-                }
-                ranges.add(new ValueRange()
-                        .setRange("Аркуш1!" + columnLetter + (i + 1) + ":" + columnLetter + (j + 1))
-                        .setValues(currSegmValues));
-                i = changes.higherKey(j);
-            }
-            // Формуємо запит для оновлення
-            BatchUpdateValuesRequest batchBody = new BatchUpdateValuesRequest()
-                    .setValueInputOption("RAW")
-                    .setData(ranges);
-            sheetsService.spreadsheets().values().batchUpdate(spreadsheetId, batchBody).execute();
-        }
-        List<Request> requests = new ArrayList<>();
-        if (!(rowsNotFound.isEmpty())) {
-            List<GridRange> rangesNotFound = new ArrayList<>();
-            Color lightRed = new Color().setRed(1f).setGreen(0.5f).setBlue(0.5f);
-            CellFormat cellFormat = new CellFormat().setBackgroundColor(lightRed);
-            CellData cellData = new CellData()
-                    .setUserEnteredValue(new ExtendedValue().setStringValue("???")) // Значення комірки "???"
-                    .setUserEnteredFormat(cellFormat); // Колір тла
-            for (Integer idx : rowsNotFound) {
-                rangesNotFound.add(new GridRange().setSheetId(0)
-                        .setStartRowIndex(idx).setEndRowIndex(idx + 1)
-                        .setStartColumnIndex(column).setEndColumnIndex(column + 1));
-            }
-            requests.addAll(rangesNotFound.stream()
-                    .map(range -> new Request()
-                            .setRepeatCell(new RepeatCellRequest()
-                                    .setRange(range)
-                                    .setCell(cellData)
-                                    .setFields("userEnteredValue,userEnteredFormat.backgroundColor") // 🔥 Одним запитом
-                            )
-                    ).collect(Collectors.toList())
-            );
-
-//            BatchUpdateSpreadsheetRequest body = new BatchUpdateSpreadsheetRequest().setRequests(requests);
-//            sheetsService.spreadsheets().batchUpdate(spreadsheetId, body).execute();
-        }
-        if (!(logMessage.isEmpty())) {
-            GridRange rangeLogNote = new GridRange().setSheetId(0)
-                    .setStartRowIndex(1).setEndRowIndex(2)
-                    .setStartColumnIndex(column).setEndColumnIndex(column + 1);
-            Color lightYellow = new Color().setRed(1f).setGreen(1f).setBlue(0.75f);
-            CellFormat cellFormatLogNote = new CellFormat()
-                    .setBackgroundColor(lightYellow)
-                    .setTextFormat(new TextFormat().setFontSize(6)) // Шрифт 6pt
-                    .setWrapStrategy("WRAP"); // Перенесення тексту
-            CellData cellDataLogNote = new CellData()
-                    .setUserEnteredValue(new ExtendedValue().setStringValue(logMessage))
-                    .setUserEnteredFormat(cellFormatLogNote); // Колір тла
-            requests.add(new Request()
-                    .setRepeatCell(new RepeatCellRequest()
-                            .setRange(rangeLogNote)
-                            .setCell(cellDataLogNote)
-                            .setFields("userEnteredValue,userEnteredFormat(backgroundColor,textFormat,wrapStrategy)")
-                    )
-            );
-
-//            BatchUpdateSpreadsheetRequest body = new BatchUpdateSpreadsheetRequest().setRequests(requests);
-//            sheetsService.spreadsheets().batchUpdate(spreadsheetId, body).execute();
-        }
-
-        if(!(requests.isEmpty())) {
-            BatchUpdateSpreadsheetRequest body = new BatchUpdateSpreadsheetRequest().setRequests(requests);
-            sheetsService.spreadsheets().batchUpdate(spreadsheetId, body).execute();
-        }
-    }
 
     public SheetAccessLevel testSpreadsheetAccessLevel(String id) {
         try {
@@ -450,6 +192,83 @@ public class GoogleSheetsService {
             }
         } catch (IOException ex) {
             return SheetAccessLevel.NO_ACCESS;
+        }
+    }
+
+    public String copySpreadsheet(String sourceSpreadsheetId) throws IOException {
+        // Перевіряємо, чи існує оригінальна таблиця (доступ хоча б для читання)
+        Spreadsheet originalSheet = sheetsService.spreadsheets().get(sourceSpreadsheetId).execute();
+        System.out.println("Оригінальна таблиця знайдена: " + originalSheet.getProperties().getTitle());
+
+        // Використовуємо Drive API для створення копії
+        File copyMetadata = new File();
+        copyMetadata.setName(originalSheet.getProperties().getTitle() + " - Copy");
+
+        File copiedFile = driveService.files().copy(sourceSpreadsheetId, copyMetadata).execute();
+        String newSpreadsheetId = copiedFile.getId();
+        System.out.println("Копія створена: " + newSpreadsheetId);
+
+        return newSpreadsheetId;
+    }
+
+    public void highlightCells(String spreadsheetId) throws IOException {
+        // Отримуємо інформацію про таблицю
+        Spreadsheet spreadsheet = sheetsService.spreadsheets().get(spreadsheetId).execute();
+        List<Sheet> sheets = spreadsheet.getSheets();
+        List<Request> requests = new ArrayList<>();
+
+        for (Sheet sheet : sheets) {
+            String sheetName = sheet.getProperties().getTitle();
+            int sheetId = sheet.getProperties().getSheetId();
+
+            // Отримуємо дані аркуша
+            String range = sheetName + "!A1:AZ500"; // Налаштуй діапазон за потреби
+            ValueRange valueRange = sheetsService.spreadsheets().values()
+                    .get(spreadsheetId, range)
+                    .execute();
+            List<List<Object>> values = valueRange.getValues();
+
+            if (values == null) continue;
+
+            // Проходимо всі клітинки, шукаємо потрібне слово
+            for (int row = 0; row < values.size(); row++) {
+                List<Object> rowValues = values.get(row);
+                for (int col = 0; col < rowValues.size(); col++) {
+                    Object cellValue = rowValues.get(col);
+                    if (cellValue != null) {
+                        String cellValueString = cellValue.toString();
+                        System.out.println("row = " + row + ", col = " + col + ", cellValue = " + cellValueString);
+                        if(cellValueString.contains("Порубл") || cellValueString.contains("Гребен")) {
+                            // Додаємо запит на зміну кольору тла комірки
+                            requests.add(new Request()
+                                    .setRepeatCell(new RepeatCellRequest()
+                                            .setRange(new GridRange()
+                                                    .setSheetId(sheetId)
+                                                    .setStartRowIndex(row)
+                                                    .setEndRowIndex(row + 1)
+                                                    .setStartColumnIndex(col)
+                                                    .setEndColumnIndex(col + 1))
+                                            .setCell(new CellData()
+                                                    .setUserEnteredFormat(new CellFormat()
+                                                            .setBackgroundColor(new Color()
+                                                                    .setRed(cellValueString.contains("Порубл") ? 1f : 0f)  // Жовтий/зелений колір
+                                                                    .setGreen(1f)
+                                                                    .setBlue(0f))))
+                                            .setFields("userEnteredFormat.backgroundColor")));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Вносимо зміни, якщо є комірки для оновлення
+        if (!requests.isEmpty()) {
+            BatchUpdateSpreadsheetRequest batchUpdateRequest = new BatchUpdateSpreadsheetRequest()
+                    .setRequests(requests);
+            sheetsService.spreadsheets().batchUpdate(spreadsheetId, batchUpdateRequest).execute();
+            System.out.println("Виділено кольором " + requests.size() + " комірок.");
+        } else {
+            System.out.println("Жодної комірки з потрібним текстом не знайдено.");
         }
     }
 
