@@ -238,7 +238,7 @@ public class GoogleSheetsService {
                     if (cellValue != null) {
                         String cellValueString = cellValue.toString();
                         System.out.println("row = " + row + ", col = " + col + ", cellValue = " + cellValueString);
-                        if(cellValueString.contains("Порубл") || cellValueString.contains("Гребен")) {
+                        if(cellValueString.contains("Порубл") || cellValueString.contains("Гребен") || cellValueString.contains("126")) {
                             // Додаємо запит на зміну кольору тла комірки
                             requests.add(new Request()
                                     .setRepeatCell(new RepeatCellRequest()
@@ -251,9 +251,9 @@ public class GoogleSheetsService {
                                             .setCell(new CellData()
                                                     .setUserEnteredFormat(new CellFormat()
                                                             .setBackgroundColor(new Color()
-                                                                    .setRed(cellValueString.contains("Порубл") ? 1f : 0f)  // Жовтий/зелений колір
-                                                                    .setGreen(1f)
-                                                                    .setBlue(0f))))
+                                                                    .setRed(cellValueString.contains("Порубл") ? 0.75f : 0f)
+                                                                    .setGreen(cellValueString.contains("Гребен") ? 0.75f : 0f)
+                                                                    .setBlue(cellValueString.contains("126") ? 0.75f : 0f))))
                                             .setFields("userEnteredFormat.backgroundColor")));
                         }
                     }
